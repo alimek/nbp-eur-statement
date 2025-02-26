@@ -17,10 +17,8 @@ Format daty musi byc YYYY-MM-DD
   "code": "EUR",
   "rates": [
     {
-      "no": "036/C/NBP/2025",
       "effectiveDate": "2025-02-21",
-      "bid": 4.1247,
-      "ask": 4.2081
+      "mid": 4.1247,
     }
   ]
 }

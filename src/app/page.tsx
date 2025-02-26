@@ -73,14 +73,14 @@ export default function Home() {
       let totalProfitSum = 0;
       
       // Process entries in chunks to handle rate limiting
-      const CHUNK_SIZE = 5; // Process 5 entries at a time
+      const CHUNK_SIZE = 50; // Process 50 entries at a time
       const interestEntries = results.data.filter(entry => entry.Description?.includes('Gross interest'));
       
       for (let i = 0; i < interestEntries.length; i += CHUNK_SIZE) {
         const chunk = interestEntries.slice(i, i + CHUNK_SIZE);
         
         // Process chunk with delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 100));
         
         await Promise.all(chunk.map(async (entry) => {
           const enhancedEntry: EnhancedStatementEntry = { ...entry };

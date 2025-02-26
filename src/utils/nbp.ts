@@ -1,7 +1,10 @@
 interface NBPResponse {
+  table: string;
+  currency: string;
+  code: string;
   rates: Array<{
-    mid: number;
     effectiveDate: string;
+    mid: number;
   }>;
 }
 
@@ -38,8 +41,8 @@ export async function getExchangeRate(date: string): Promise<number | null> {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     
-    const data = await response.json();
-    const rate = data.rates[0].ask;
+    const data: NBPResponse = await response.json();
+    const rate = data.rates[0].mid;
     
     // Cache the result
     localStorage.setItem(cacheKey, rate.toString());
