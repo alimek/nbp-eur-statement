@@ -1,6 +1,6 @@
 # API do pobrania danych na temat kursu waluty w danym dniu z NBP
 
-HTTP GET na https://api.nbp.pl/api/exchangerates/rates/c/{CURRENCY}/{DATE}/?format=json
+HTTP GET na https://api.nbp.pl/api/exchangerates/rates/a/{CURRENCY}/{DATE}/?format=json
 
 ## CURRENCY:
 - EUR
@@ -12,7 +12,7 @@ Format daty musi byc YYYY-MM-DD
 
 ```json
 {
-  "table": "C",
+  "table": "A",
   "currency": "euro",
   "code": "EUR",
   "rates": [

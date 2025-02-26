@@ -29,7 +29,7 @@ export async function getExchangeRate(date: string): Promise<number | null> {
   }
 
   try {
-    const response = await fetch(`https://api.nbp.pl/api/exchangerates/rates/c/eur/${date}/?format=json`);
+    const response = await fetch(`https://api.nbp.pl/api/exchangerates/rates/a/eur/${date}/?format=json`);
     
     if (response.status === 404) {
       // If rate not found for this date, try previous working day
