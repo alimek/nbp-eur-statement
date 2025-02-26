@@ -1,101 +1,350 @@
-import Image from "next/image";
+'use client';
+
+import { useState, ChangeEvent } from 'react';
+import Papa, { ParseResult } from 'papaparse';
+import { getExchangeRate, getPreviousWorkingDay } from '../utils/nbp';
+
+interface StatementEntry {
+  'Completed Date': string;
+  'Product name': string;
+  'Description': string;
+  'Interest rate (p.a.)': string;
+  'Money out': string;
+  'Money in': string;
+  'Balance': string;
+  'PLN Value'?: string;
+}
+
+interface EnhancedStatementEntry extends StatementEntry {
+  exchangeRate?: number;
+  nbpDate?: string;
+  profit?: number;
+}
+
+const MONTHS: { [key: string]: string } = {
+  'Jan': '01',
+  'Feb': '02',
+  'Mar': '03',
+  'Apr': '04',
+  'May': '05',
+  'Jun': '06',
+  'Jul': '07',
+  'Aug': '08',
+  'Sep': '09',
+  'Oct': '10',
+  'Nov': '11',
+  'Dec': '12'
+};
+
+function parseDate(dateStr: string): Date {
+  // Parse date in format "1 Jan 2024"
+  const [day, month, year] = dateStr.split(' ');
+  const monthNum = MONTHS[month];
+  const paddedDay = day.padStart(2, '0');
+  return new Date(`${year}-${monthNum}-${paddedDay}`);
+}
+
+function formatDateForAPI(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function compareDates(a: string, b: string): number {
+  const dateA = parseDate(a);
+  const dateB = parseDate(b);
+  return dateA.getTime() - dateB.getTime();
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [data, setData] = useState<EnhancedStatementEntry[]>([]);
+  const [sortField, setSortField] = useState<keyof StatementEntry>('Completed Date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [totalProfit, setTotalProfit] = useState<number>(0);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const processCSVData = async (results: ParseResult<StatementEntry>) => {
+    try {
+      console.log('Parsed CSV data:', results.data);
+      
+      const enhancedData: EnhancedStatementEntry[] = [];
+      let totalProfitSum = 0;
+      
+      for (const entry of results.data) {
+        const enhancedEntry: EnhancedStatementEntry = { ...entry };
+        
+        if (entry.Description?.includes('Gross interest')) {
+          const date = entry['Completed Date'];
+          if (date) {
+            const parsedDate = parseDate(date);
+            const formattedDate = formatDateForAPI(parsedDate);
+            const previousWorkingDay = getPreviousWorkingDay(formattedDate);
+            const rate = await getExchangeRate(previousWorkingDay);
+            
+            if (rate && entry['Money in']) {
+              const eurValue = parseFloat(entry['Money in'].replace('€', '').replace(',', ''));
+              enhancedEntry.exchangeRate = rate;
+              enhancedEntry.profit = eurValue * rate;
+              enhancedEntry.nbpDate = previousWorkingDay;
+              totalProfitSum += enhancedEntry.profit;
+            }
+          }
+        }
+        
+        enhancedData.push(enhancedEntry);
+      }
+      
+      // Sort data chronologically by default
+      const sortedData = enhancedData.sort((a, b) => 
+        compareDates(a['Completed Date'], b['Completed Date'])
+      );
+      
+      setData(sortedData);
+      setTotalProfit(totalProfitSum);
+      setLoading(false);
+    } catch (err: unknown) {
+      console.error('Error processing data:', err);
+      setError(err instanceof Error ? err.message : 'Error processing data');
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const csvText = e.target?.result as string;
+      Papa.parse<StatementEntry>(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        complete: processCSVData,
+        error: (error: Error) => {
+          console.error('CSV parsing error:', error);
+          setError(`CSV parsing error: ${error.message}`);
+          setLoading(false);
+        }
+      });
+    };
+    reader.onerror = () => {
+      setError('Error reading file');
+      setLoading(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSort = (field: keyof StatementEntry) => {
+    if (field === sortField) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const sortedData = [...data].sort((a, b) => {
+    if (sortField === 'Completed Date') {
+      const compareResult = compareDates(a[sortField], b[sortField]);
+      return sortDirection === 'asc' ? compareResult : -compareResult;
+    }
+    
+    if (sortField === 'Money in' || sortField === 'Money out' || sortField === 'Balance') {
+      const valueA = parseFloat((a[sortField] || '0').replace('€', '').replace(',', '')) || 0;
+      const valueB = parseFloat((b[sortField] || '0').replace('€', '').replace(',', '')) || 0;
+      return sortDirection === 'asc' ? valueA - valueB : valueB - valueA;
+    }
+
+    if (sortDirection === 'asc') {
+      return (a[sortField] ?? '') > (b[sortField] ?? '') ? 1 : -1;
+    }
+    return (a[sortField] ?? '') < (b[sortField] ?? '') ? 1 : -1;
+  });
+
+  const handleExportCSV = () => {
+    const exportData = sortedData.map(entry => ({
+      'Date': entry['Completed Date'],
+      'Product': entry['Product name'],
+      'Description': entry['Description'],
+      'Interest Rate': entry['Interest rate (p.a.)'],
+      'Money Out': entry['Money out'],
+      'Money In': entry['Money in'],
+      'Balance': entry['Balance'],
+      'NBP Date': entry.nbpDate || '',
+      'Exchange Rate': entry.exchangeRate?.toFixed(4) || '',
+      'Profit PLN': entry.profit?.toFixed(2) || ''
+    }));
+
+    // Add total profit as the last row
+    exportData.push({
+      'Date': '',
+      'Product': '',
+      'Description': '',
+      'Interest Rate': '',
+      'Money Out': '',
+      'Money In': '',
+      'Balance': '',
+      'NBP Date': '',
+      'Exchange Rate': 'Total Profit:',
+      'Profit PLN': totalProfit.toFixed(2)
+    });
+
+    const csv = Papa.unparse(exportData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'eur-statement-with-pln.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (error) {
+    return (
+      <main className="container mx-auto p-4">
+        <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+          <div className="text-xl text-red-600">Error: {error}</div>
+          <label className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded cursor-pointer">
+            Upload CSV
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              className="hidden"
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          </label>
         </div>
       </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    );
+  }
+
+  return (
+    <main className="container mx-auto p-4">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">EUR Statement</h1>
+        <div className="flex gap-4">
+          <label className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded cursor-pointer">
+            Upload CSV
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+          {data.length > 0 && (
+            <button
+              onClick={handleExportCSV}
+              className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+            >
+              Export to CSV
+            </button>
+          )}
+        </div>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="text-xl">Processing data...</div>
+        </div>
+      ) : data.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full bg-white border border-gray-300">
+            <thead>
+              <tr className="bg-gray-100">
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Completed Date')}
+                >
+                  Date {sortField === 'Completed Date' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Product name')}
+                >
+                  Product {sortField === 'Product name' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Description')}
+                >
+                  Description {sortField === 'Description' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Interest rate (p.a.)')}
+                >
+                  Interest Rate {sortField === 'Interest rate (p.a.)' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Money out')}
+                >
+                  Money Out {sortField === 'Money out' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Money in')}
+                >
+                  Money In {sortField === 'Money in' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-4 py-2 cursor-pointer hover:bg-gray-200"
+                  onClick={() => handleSort('Balance')}
+                >
+                  Balance {sortField === 'Balance' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th className="px-4 py-2">
+                  NBP Date
+                </th>
+                <th className="px-4 py-2">
+                  Exchange Rate
+                </th>
+                <th className="px-4 py-2">
+                  Profit PLN
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedData.map((entry, index) => (
+                <tr 
+                  key={index}
+                  className={`${index % 2 === 0 ? 'bg-gray-50' : 'bg-white'} hover:bg-gray-100`}
+                >
+                  <td className="px-4 py-2 border-t">{entry['Completed Date']}</td>
+                  <td className="px-4 py-2 border-t">{entry['Product name']}</td>
+                  <td className="px-4 py-2 border-t whitespace-pre-line">{entry['Description']}</td>
+                  <td className="px-4 py-2 border-t text-right">{entry['Interest rate (p.a.)']}</td>
+                  <td className="px-4 py-2 border-t text-right text-red-600">{entry['Money out']}</td>
+                  <td className="px-4 py-2 border-t text-right text-green-600">{entry['Money in']}</td>
+                  <td className="px-4 py-2 border-t text-right font-medium">{entry['Balance']}</td>
+                  <td className="px-4 py-2 border-t text-right">{entry.nbpDate || '-'}</td>
+                  <td className="px-4 py-2 border-t text-right">
+                    {entry.exchangeRate?.toFixed(4) || '-'}
+                  </td>
+                  <td className="px-4 py-2 border-t text-right font-medium">
+                    {entry.profit ? `${entry.profit.toFixed(2)} PLN` : '-'}
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-gray-200 font-bold">
+                <td colSpan={9} className="px-4 py-2 text-right">Total Profit:</td>
+                <td className="px-4 py-2 text-right">{totalProfit.toFixed(2)} PLN</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="text-xl text-gray-500">Upload a CSV file to start</div>
+        </div>
+      )}
+    </main>
   );
 }
