@@ -72,11 +72,20 @@ export default function Home() {
       const enhancedData: EnhancedStatementEntry[] = [];
       let totalProfitSum = 0;
       
-      for (const entry of results.data) {
-        const enhancedEntry: EnhancedStatementEntry = { ...entry };
+      // Process entries in chunks to handle rate limiting
+      const CHUNK_SIZE = 5; // Process 5 entries at a time
+      const interestEntries = results.data.filter(entry => entry.Description?.includes('Gross interest'));
+      
+      for (let i = 0; i < interestEntries.length; i += CHUNK_SIZE) {
+        const chunk = interestEntries.slice(i, i + CHUNK_SIZE);
         
-        if (entry.Description?.includes('Gross interest')) {
+        // Process chunk with delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        await Promise.all(chunk.map(async (entry) => {
+          const enhancedEntry: EnhancedStatementEntry = { ...entry };
           const date = entry['Completed Date'];
+          
           if (date) {
             const parsedDate = parseDate(date);
             const formattedDate = formatDateForAPI(parsedDate);
@@ -91,10 +100,14 @@ export default function Home() {
               totalProfitSum += enhancedEntry.profit;
             }
           }
-        }
-        
-        enhancedData.push(enhancedEntry);
+          
+          enhancedData.push(enhancedEntry);
+        }));
       }
+      
+      // Add non-interest entries
+      const nonInterestEntries = results.data.filter(entry => !entry.Description?.includes('Gross interest'));
+      enhancedData.push(...nonInterestEntries);
       
       // Sort data chronologically by default
       const sortedData = enhancedData.sort((a, b) => 

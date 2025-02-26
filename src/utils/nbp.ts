@@ -5,46 +5,48 @@ interface NBPResponse {
   }>;
 }
 
-export async function getExchangeRate(date: string): Promise<number | null> {
-  try {
-    const response = await fetch(
-      `https://api.nbp.pl/api/exchangerates/rates/a/EUR/${date}/?format=json`
-    );
-    
-    if (!response.ok) {
-      // If we get a 404 or any other error, try the previous working day
-      if (response.status === 404) {
-        const previousDay = getPreviousWorkingDay(date);
-        console.log(`No rate for ${date}, trying ${previousDay}`);
-        return getExchangeRate(previousDay);
-      }
-      console.error(`Failed to fetch exchange rate for ${date}`);
-      return null;
-    }
-
-    const data: NBPResponse = await response.json();
-    return data.rates[0].mid;
-  } catch (error) {
-    console.error(`Error fetching exchange rate for ${date}:`, error);
-    return null;
-  }
-}
+const CACHE_PREFIX = 'nbp_rate_';
 
 export function getPreviousWorkingDay(date: string): string {
-  const currentDate = new Date(date);
+  const d = new Date(date);
+  do {
+    d.setDate(d.getDate() - 1);
+  } while (d.getDay() === 0 || d.getDay() === 6);
   
-  // Move to the previous day
-  currentDate.setDate(currentDate.getDate() - 1);
+  return d.toISOString().split('T')[0];
+}
+
+export async function getExchangeRate(date: string): Promise<number | null> {
+  // Check cache first
+  const cacheKey = `${CACHE_PREFIX}${date}`;
+  const cachedRate = localStorage.getItem(cacheKey);
   
-  // Keep moving back until we find a working day (not Saturday or Sunday)
-  while (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
-    currentDate.setDate(currentDate.getDate() - 1);
+  if (cachedRate) {
+    return parseFloat(cachedRate);
   }
 
-  // Format the date as YYYY-MM-DD
-  const year = currentDate.getFullYear();
-  const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-  const day = String(currentDate.getDate()).padStart(2, '0');
-  
-  return `${year}-${month}-${day}`;
+  try {
+    const response = await fetch(`https://api.nbp.pl/api/exchangerates/rates/c/eur/${date}/?format=json`);
+    
+    if (response.status === 404) {
+      // If rate not found for this date, try previous working day
+      const previousDay = getPreviousWorkingDay(date);
+      return getExchangeRate(previousDay);
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const rate = data.rates[0].ask;
+    
+    // Cache the result
+    localStorage.setItem(cacheKey, rate.toString());
+    
+    return rate;
+  } catch (error) {
+    console.error('Error fetching exchange rate:', error);
+    return null;
+  }
 } 
